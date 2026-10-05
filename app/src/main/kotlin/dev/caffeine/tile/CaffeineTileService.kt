@@ -34,10 +34,12 @@ class CaffeineTileService : TileService() {
     private val controller: CaffeineController by lazy { CaffeineController.get(this) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var listenJob: Job? = null
+    private var publishJob: Job? = null
+    private var latestState: CaffeineState = CaffeineState.Off
 
     override fun onTileAdded() {
         super.onTileAdded()
-        render(controller.state.value)
+        publish(controller.state.value)
     }
 
     override fun onStartListening() {
@@ -53,13 +55,13 @@ class CaffeineTileService : TileService() {
             // collectLatest cancels the countdown loop whenever the state changes, so there is
             // exactly one ticker per visible timed session and none once the panel closes.
             controller.state.collectLatest { state ->
-                render(state)
+                publish(state)
                 val active = state as? CaffeineState.Active ?: return@collectLatest
                 while (true) {
                     val remaining = active.remainingMillis(controller.now()) ?: return@collectLatest
                     delay(Ticks.untilNextMinuteChange(remaining))
                     controller.reconcile()
-                    render(controller.state.value)
+                    publish(controller.state.value)
                 }
             }
         }
@@ -78,45 +80,75 @@ class CaffeineTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
+        if (controller.isIntroPending()) {
+            openSettingsAndCollapse(setup = true)
+            controller.markIntroDone()
+            return
+        }
         // Works on the lock screen too, like the AOSP tile: nothing sensitive is exposed.
-        render(controller.toggleFromTile())
+        controller.toggleFromTile()
+        publish(controller.state.value)
+    }
+
+    /**
+     * SystemUI often keeps the first subtitle when [Tile.updateTile] is called again while the
+     * tile stays active, which is exactly a second tap that lengthens the session. Push the
+     * latest state immediately, then once more after a short delay so the second tap lands.
+     */
+    private fun publish(state: CaffeineState) {
+        latestState = state
+        render(state)
+        publishJob?.cancel()
+        publishJob = scope.launch {
+            delay(TILE_REFRESH_DELAY_MS)
+            render(latestState)
+        }
     }
 
     private fun render(state: CaffeineState) {
         val tile = qsTile ?: return
-        val label = getString(R.string.tile_label)
-        tile.label = label
+        val name = getString(R.string.tile_label)
         tile.icon = Icon.createWithResource(this, R.drawable.ic_caffeine)
         when (state) {
             CaffeineState.Off -> {
                 tile.state = Tile.STATE_INACTIVE
+                tile.label = name
                 tile.subtitle = getString(R.string.tile_off)
                 tile.stateDescription = getString(R.string.tile_off)
+                tile.contentDescription = name
             }
             is CaffeineState.Active -> {
                 val remaining = state.remainingMillis(controller.now())
-                val subtitle = if (remaining == null) getString(R.string.indefinitely) else DurationFormat.remaining(this, remaining)
+                val status = if (remaining == null) {
+                    getString(R.string.indefinitely)
+                } else {
+                    DurationFormat.remaining(this, remaining)
+                }
+                // The label has to change too. A subtitle-only update is what SystemUI drops.
                 tile.state = Tile.STATE_ACTIVE
-                tile.subtitle = subtitle
-                tile.stateDescription = subtitle
+                tile.label = status
+                tile.subtitle = status
+                tile.stateDescription = status
+                tile.contentDescription = "$name, $status"
             }
         }
-        tile.contentDescription = label
         tile.updateTile()
     }
 
     private fun onStartNotAllowed() {
         Toast.makeText(this, R.string.toast_start_failed, Toast.LENGTH_LONG).show()
-        openSettingsAndCollapse()
+        openSettingsAndCollapse(setup = false)
     }
 
     @SuppressLint("StartActivityAndCollapseDeprecated")
-    private fun openSettingsAndCollapse() {
-        val intent = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    private fun openSettingsAndCollapse(setup: Boolean) {
+        val intent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(MainActivity.EXTRA_SETUP, setup)
         if (Sdk.isAtLeast34()) {
             val pendingIntent = PendingIntent.getActivity(
                 this,
-                0,
+                if (setup) REQUEST_SETUP else REQUEST_SETTINGS,
                 intent,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
@@ -125,5 +157,11 @@ class CaffeineTileService : TileService() {
             @Suppress("DEPRECATION") // Intent overload is the only one on API 31-33.
             startActivityAndCollapse(intent)
         }
+    }
+
+    companion object {
+        private const val TILE_REFRESH_DELAY_MS = 150L
+        private const val REQUEST_SETTINGS = 1
+        private const val REQUEST_SETUP = 2
     }
 }

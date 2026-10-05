@@ -6,11 +6,13 @@
     <!-- Foreground service + the Android 14 (API 34) type-specific permission for specialUse. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- Android 13 (API 33) runtime permission; requested contextually, never required for the
-         feature to work. The FGS keeps running without it (its notification is simply hidden). -->
+    <!-- Android 13 (API 33) runtime permission. Asked on the first tile tap. The session
+         still runs if the user denies it; the countdown notification is simply hidden. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lets the first-run screen show the system "unrestricted battery" dialog. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Deliberately absent: INTERNET, RECEIVE_BOOT_COMPLETED, SCHEDULE_EXACT_ALARM,
-         SYSTEM_ALERT_WINDOW, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS. -->
+         SYSTEM_ALERT_WINDOW. -->
 
     <application
         android:name=".CaffeineApp"

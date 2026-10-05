@@ -3,6 +3,7 @@ package dev.caffeine.core
 import android.app.Application
 import android.app.ForegroundServiceStartNotAllowedException
 import android.content.Context
+import android.content.Context.MODE_PRIVATE
 import android.os.SystemClock
 import android.util.Log
 import dev.caffeine.data.SettingsRepository
@@ -69,6 +70,17 @@ class CaffeineController private constructor(private val app: Application) {
 
     /** Monotonic clock for all timer math. Wall-clock changes never affect sessions. */
     fun now(): Long = SystemClock.elapsedRealtime()
+
+    /**
+     * True until the user has tapped the tile once. That first tap opens settings so they can
+     * answer the notification and battery prompts; it does not start a session.
+     */
+    fun isIntroPending(): Boolean =
+        !app.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_INTRO_DONE, false)
+
+    fun markIntroDone() {
+        app.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_INTRO_DONE, true).commit()
+    }
 
     /** Tile tap: Off -> default -> next longer -> ... -> Off. */
     fun toggleFromTile(): CaffeineState = apply(CaffeineLogic.nextOnTap(_state.value, settings.value, now()))
@@ -203,6 +215,8 @@ class CaffeineController private constructor(private val app: Application) {
 
     companion object {
         private const val TAG = "CaffeineController"
+        private const val PREFS = "caffeine_flags"
+        private const val KEY_INTRO_DONE = "intro_done"
 
         /** Wall-clock drift tolerated when deciding whether persisted elapsed timestamps belong to this boot. */
         private const val BOOT_BASE_TOLERANCE_MS = 2 * 60_000L
