@@ -1,0 +1,50 @@
+# Machine-specific SDK path (sdk.dir). Never commit this.
+local.properties
+
+# Gradle build cache and every module's build output.
+.gradle/
+build/
+
+# Packaged apps, if copied out of build/outputs.
+*.apk
+*.ap_
+*.aab
+*.dex
+
+# Release signing material.
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# Android Studio / IntelliJ. Project files (.kts, wrapper) stay tracked.
+.idea/
+*.iml
+*.ipr
+*.iws
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Kotlin compiler daemon and incremental caches.
+.kotlin/
+
+# Profiler snapshots and tool logs.
+*.hprof
+*.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor swap files
+*~
+*.swp
+*.swo

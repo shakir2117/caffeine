@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Screen wake lock. Normal permission. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Foreground service + the Android 14 (API 34) type-specific permission for specialUse. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Android 13 (API 33) runtime permission; requested contextually, never required for the
+         feature to work. The FGS keeps running without it (its notification is simply hidden). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Deliberately absent: INTERNET, RECEIVE_BOOT_COMPLETED, SCHEDULE_EXACT_ALARM,
+         SYSTEM_ALERT_WINDOW, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS. -->
+
+    <application
+        android:name=".CaffeineApp"
+        android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Caffeine">
+
+        <!--
+            No MAIN / LAUNCHER filter on purpose: Caffeine has no icon in the app drawer.
+            Add the tile from the Quick Settings editor; long-press it to open settings.
+        -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Keep-awake foreground service. See CaffeineService for the specialUse justification. -->
+        <service
+            android:name=".service.CaffeineService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <!-- Required alongside specialUse on Android 14+; also what Play Console review reads. -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the device screen on for a duration the user selected from a Quick Settings tile, by holding a screen wake lock. No other foregroundServiceType describes this." />
+        </service>
+
+        <!-- Inexact alarm target used as a safety net to release the wake lock at the deadline. -->
+        <receiver
+            android:name=".service.DeadlineReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".tile.CaffeineTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_caffeine"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <!-- Tells SystemUI the tile behaves like a switch (accessibility, "On/Off" semantics). -->
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+    </application>
+</manifest>

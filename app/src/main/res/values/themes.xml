@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Framework DayNight theme: no AppCompat/Material Components dependency needed for a
+         Compose-only app. Compose supplies the Material 3 dynamic color scheme. -->
+    <style name="Theme.Caffeine" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+    </style>
+</resources>
