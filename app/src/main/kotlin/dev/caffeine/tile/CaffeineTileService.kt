@@ -4,9 +4,15 @@ import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Intent
 import android.graphics.drawable.Icon
+import android.os.Handler
+import android.os.Looper
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
+import android.util.Log
 import android.widget.Toast
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import dev.caffeine.R
 import dev.caffeine.core.CaffeineController
 import dev.caffeine.core.CaffeineEvent
@@ -20,8 +26,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
@@ -33,47 +37,44 @@ class CaffeineTileService : TileService() {
 
     private val controller: CaffeineController by lazy { CaffeineController.get(this) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val ticker = Executors.newSingleThreadScheduledExecutor()
     private var listenJob: Job? = null
-    private var publishJob: Job? = null
-    private var latestState: CaffeineState = CaffeineState.Off
+    private var tick: ScheduledFuture<*>? = null
+    private var listening = false
 
     override fun onTileAdded() {
         super.onTileAdded()
-        publish(controller.state.value)
+        render(controller.state.value)
     }
 
     override fun onStartListening() {
         super.onStartListening()
+        listening = true
         controller.reconcile() // the device may have slept past the deadline
         listenJob?.cancel()
         listenJob = scope.launch {
-            launch {
-                controller.events.collect { event ->
-                    if (event is CaffeineEvent.StartNotAllowed) onStartNotAllowed()
-                }
-            }
-            // collectLatest cancels the countdown loop whenever the state changes, so there is
-            // exactly one ticker per visible timed session and none once the panel closes.
-            controller.state.collectLatest { state ->
-                publish(state)
-                val active = state as? CaffeineState.Active ?: return@collectLatest
-                while (true) {
-                    val remaining = active.remainingMillis(controller.now()) ?: return@collectLatest
-                    delay(Ticks.untilNextMinuteChange(remaining))
-                    controller.reconcile()
-                    publish(controller.state.value)
-                }
+            controller.events.collect { event ->
+                if (event is CaffeineEvent.StartNotAllowed) onStartNotAllowed()
             }
         }
+        updateTile()
     }
 
     override fun onStopListening() {
+        listening = false
+        tick?.cancel(false)
+        tick = null
         listenJob?.cancel()
         listenJob = null
         super.onStopListening()
     }
 
     override fun onDestroy() {
+        listening = false
+        tick?.cancel(false)
+        tick = null
+        ticker.shutdownNow()
         scope.cancel()
         super.onDestroy()
     }
@@ -86,23 +87,32 @@ class CaffeineTileService : TileService() {
             return
         }
         // Works on the lock screen too, like the AOSP tile: nothing sensitive is exposed.
-        controller.toggleFromTile()
-        publish(controller.state.value)
+        val next = controller.toggleFromTile()
+        Log.i(TAG, "tap -> $next")
+        // Paint the new minutes before this click returns. The next paint waits until
+        // that minute label changes, so the tile never shows a seconds clock.
+        updateTile()
     }
 
     /**
-     * SystemUI often keeps the first subtitle when [Tile.updateTile] is called again while the
-     * tile stays active, which is exactly a second tap that lengthens the session. Push the
-     * latest state immediately, then once more after a short delay so the second tap lands.
+     * Paint the live session. A timed session is painted again when "5 min left" becomes
+     * "4 min left", not every second.
      */
-    private fun publish(state: CaffeineState) {
-        latestState = state
+    private fun updateTile() {
+        val state = controller.state.value
         render(state)
-        publishJob?.cancel()
-        publishJob = scope.launch {
-            delay(TILE_REFRESH_DELAY_MS)
-            render(latestState)
+        tick?.cancel(false)
+        tick = null
+        if (!listening) return
+        val remaining = (state as? CaffeineState.Active)?.remainingMillis(controller.now()) ?: return
+        if (remaining <= 0L) {
+            controller.reconcile()
+            render(controller.state.value)
+            return
         }
+        tick = ticker.schedule({
+            mainHandler.post { if (listening) updateTile() }
+        }, Ticks.untilNextMinuteChange(remaining), TimeUnit.MILLISECONDS)
     }
 
     private fun render(state: CaffeineState) {
@@ -119,17 +129,21 @@ class CaffeineTileService : TileService() {
             }
             is CaffeineState.Active -> {
                 val remaining = state.remainingMillis(controller.now())
-                val status = if (remaining == null) {
-                    getString(R.string.indefinitely)
+                if (remaining == null) {
+                    val status = getString(R.string.indefinitely)
+                    tile.state = Tile.STATE_ACTIVE
+                    tile.label = status
+                    tile.subtitle = null
+                    tile.stateDescription = status
+                    tile.contentDescription = "$name, $status"
                 } else {
-                    DurationFormat.remaining(this, remaining)
+                    val title = DurationFormat.remaining(this, remaining)
+                    tile.state = Tile.STATE_ACTIVE
+                    tile.label = title
+                    tile.subtitle = null
+                    tile.stateDescription = title
+                    tile.contentDescription = "$name, $title"
                 }
-                // The label has to change too. A subtitle-only update is what SystemUI drops.
-                tile.state = Tile.STATE_ACTIVE
-                tile.label = status
-                tile.subtitle = status
-                tile.stateDescription = status
-                tile.contentDescription = "$name, $status"
             }
         }
         tile.updateTile()
@@ -160,7 +174,7 @@ class CaffeineTileService : TileService() {
     }
 
     companion object {
-        private const val TILE_REFRESH_DELAY_MS = 150L
+        private const val TAG = "CaffeineTile"
         private const val REQUEST_SETTINGS = 1
         private const val REQUEST_SETUP = 2
     }

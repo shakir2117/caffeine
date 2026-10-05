@@ -17,6 +17,20 @@ object DurationFormat {
         else -> context.resources.getQuantityString(R.plurals.duration_minutes, duration.minutes, duration.minutes)
     }
 
+    /** "4:59 left", or "1:05:03 left" once an hour or more is left. Rounds up so it never shows 0 early. */
+    fun clock(context: Context, remainingMillis: Long): String {
+        val totalSeconds = ceil(remainingMillis / 1_000.0).toLong().coerceAtLeast(0L)
+        val hours = totalSeconds / 3_600
+        val minutes = (totalSeconds % 3_600) / 60
+        val seconds = totalSeconds % 60
+        val text = if (hours > 0) {
+            "%d:%02d:%02d".format(hours, minutes, seconds)
+        } else {
+            "%d:%02d".format(minutes, seconds)
+        }
+        return context.getString(R.string.remaining_clock, text)
+    }
+
     /** "12 min left" style text; rounds *up* so the label never shows 0 while time remains. */
     fun remaining(context: Context, remainingMillis: Long): String {
         val totalMinutes = ceil(remainingMillis / 60_000.0).toInt()

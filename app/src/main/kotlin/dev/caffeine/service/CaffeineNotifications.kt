@@ -35,11 +35,17 @@ object CaffeineNotifications {
     fun canPost(context: Context): Boolean = NotificationManagerCompat.from(context).areNotificationsEnabled()
 
     /**
-     * Ongoing notification with the remaining time and a Stop action.
-     * The remaining time is shown twice: as text (refreshed by the service once a minute) and
-     * as a live chronometer countdown that needs no updates at all.
+     * Ongoing notification with the minutes still left and a Stop action.
+     * The small countdown in the header is the system chronometer for the same deadline.
+     * [countdownEndsAtMillis] is that deadline on the wall clock, kept stable across updates
+     * so the countdown is not restarted when the minutes text changes.
      */
-    fun build(context: Context, active: CaffeineState.Active?, nowElapsed: Long): Notification {
+    fun build(
+        context: Context,
+        active: CaffeineState.Active?,
+        nowElapsed: Long,
+        countdownEndsAtMillis: Long? = null,
+    ): Notification {
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         val stopIntent = PendingIntent.getForegroundService(context, 0, CaffeineService.stopIntent(context), flags)
         val openIntent = PendingIntent.getActivity(
@@ -71,7 +77,7 @@ object CaffeineNotifications {
                 if (remaining != null) {
                     setUsesChronometer(true)
                     setChronometerCountDown(true)
-                    setWhen(System.currentTimeMillis() + remaining)
+                    setWhen(countdownEndsAtMillis ?: (System.currentTimeMillis() + remaining))
                     setShowWhen(true)
                 } else {
                     setShowWhen(false)

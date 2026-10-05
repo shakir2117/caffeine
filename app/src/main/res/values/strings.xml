@@ -15,6 +15,7 @@
 
     <!-- Remaining time -->
     <string name="remaining_under_minute">Less than a minute left</string>
+    <string name="remaining_clock">%1$s left</string>
     <string name="remaining_hours_minutes">%1$d hr %2$d min left</string>
     <plurals name="remaining_minutes">
         <item quantity="one">%d min left</item>

@@ -64,10 +64,6 @@
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
-            <!-- Tells SystemUI the tile behaves like a switch (accessibility, "On/Off" semantics). -->
-            <meta-data
-                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
-                android:value="true" />
         </service>
     </application>
 </manifest>

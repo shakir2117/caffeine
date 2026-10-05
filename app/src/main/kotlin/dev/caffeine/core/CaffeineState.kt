@@ -34,10 +34,16 @@ sealed interface CaffeineState {
     }
 }
 
-/** Milliseconds until a "N min left" label (ceil of minutes) changes, plus a small margin. */
+/** Delays until a countdown label changes, plus a small margin so the tick is not early. */
 object Ticks {
+    private const val SECOND = 1_000L
     private const val MINUTE = 60_000L
     private const val MARGIN = 50L
+
+    fun untilNextSecond(remainingMillis: Long): Long {
+        if (remainingMillis <= 0L) return 0L
+        return ((remainingMillis - 1) % SECOND) + 1 + MARGIN
+    }
 
     fun untilNextMinuteChange(remainingMillis: Long): Long {
         if (remainingMillis <= 0L) return 0L

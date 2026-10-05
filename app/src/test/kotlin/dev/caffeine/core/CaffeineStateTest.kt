@@ -53,4 +53,11 @@ class CaffeineStateTest {
         assertEquals(1L + 50L, Ticks.untilNextMinuteChange(1L))
         assertEquals(0L, Ticks.untilNextMinuteChange(0L))
     }
+
+    @Test
+    fun `second tick delay lands just after the clock would change`() {
+        assertEquals(400L + 50L, Ticks.untilNextSecond(4_400L))
+        assertEquals(1_000L + 50L, Ticks.untilNextSecond(5_000L))
+        assertEquals(0L, Ticks.untilNextSecond(0L))
+    }
 }

@@ -22,6 +22,7 @@ import dev.caffeine.core.CaffeineState
 import dev.caffeine.core.Sdk
 import dev.caffeine.core.StopReason
 import dev.caffeine.core.Ticks
+import kotlin.math.ceil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -67,7 +68,7 @@ import kotlinx.coroutines.launch
  * ## Timer semantics
  * The deadline is `elapsedRealtime`-based (monotonic). Three mechanisms converge on it:
  *  1. `WakeLock.acquire(timeout)`: the lock auto-releases even if our coroutine is late.
- *  2. An in-process coroutine that updates the notification once a minute and stops at 0.
+ *  2. An in-process coroutine that updates the "N min left" line when that minute changes, and stops at 0.
  *  3. An inexact `setAndAllowWhileIdle` alarm plus `ACTION_SCREEN_ON`, both of which call
  *     `controller.reconcile()`. These cover the case where the user turned the screen off
  *     without "stop on screen off" and the device dozed: the `uptimeMillis`-based handler delays
@@ -89,6 +90,13 @@ class CaffeineService : Service() {
     private var generation = 0
     private var lastStartId = 0
     private var pendingStop: Runnable? = null
+    private var inForeground = false
+    private var hasShownDeadline = false
+    private var shownDeadline: Long? = null
+    /** Ceiled minutes last written on the notification, so "5 min left" is not posted again. */
+    private var shownMinutes: Int? = null
+    /** Wall-clock end of the chronometer. Reused so a text update does not restart it. */
+    private var countdownEndsAt: Long? = null
 
     private val conditionsReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -125,7 +133,7 @@ class CaffeineService : Service() {
         cancelPendingStop()
         // Always promote to foreground first; Android 12+ ANRs an app whose service started via
         // startForegroundService() does not call startForeground() promptly.
-        if (!goForeground()) {
+        if (!goForeground(force = true)) {
             controller.onServiceStartDenied()
             stopSelf(startId)
             return START_NOT_STICKY
@@ -179,26 +187,34 @@ class CaffeineService : Service() {
         registerReceiver()
         scheduleDeadlineAlarm(state)
         if (stopIfConditionAlreadyMet()) return
-        startTicker(state)
+        startTicker()
     }
 
     @SuppressLint("WakelockTimeout") // "Indefinitely" is an explicit user choice; released on stop/destroy.
     private fun acquireIndefinitely() = wakeLock.acquire()
 
-    private fun startTicker(state: CaffeineState.Active) {
+    private fun startTicker() {
         sessionJob?.cancel()
         sessionJob = scope.launch {
+            // Always read the live session. A tap used to leave this loop counting the deadline
+            // it was started with, so the notification and the wake lock kept the old timer.
             while (isActive) {
-                val remaining = state.remainingMillis(controller.now())
+                val active = controller.state.value as? CaffeineState.Active ?: return@launch
+                val remaining = active.remainingMillis(controller.now())
                 if (remaining == null) {
-                    goForeground() // indefinite: one notification refresh, nothing to count down
+                    goForeground()
                     return@launch
                 }
                 if (remaining <= 0L) {
-                    controller.stop(StopReason.EXPIRED)
+                    val still = controller.state.value as? CaffeineState.Active
+                    if (still?.deadlineElapsed == active.deadlineElapsed) {
+                        controller.stop(StopReason.EXPIRED)
+                    }
                     return@launch
                 }
-                goForeground() // refreshes the "N min left" text
+                // Refresh the "N min left" line when it changes. The small countdown
+                // in the notification keeps running on its own.
+                goForeground()
                 delay(Ticks.untilNextMinuteChange(remaining))
             }
         }
@@ -215,6 +231,11 @@ class CaffeineService : Service() {
             pendingStop = null
             if (controller.state.value is CaffeineState.Active) return@Runnable
             stopForeground(STOP_FOREGROUND_REMOVE)
+            inForeground = false
+            hasShownDeadline = false
+            shownDeadline = null
+            shownMinutes = null
+            countdownEndsAt = null
             controller.onServiceStopIssued()
             stopSelf(token)
         }
@@ -246,12 +267,19 @@ class CaffeineService : Service() {
      * foreground service is allowed in every app state and sidesteps the POST_NOTIFICATIONS
      * check that NotificationManager.notify() would need.
      */
-    private fun goForeground(): Boolean {
-        val notification = CaffeineNotifications.build(
-            this,
-            controller.state.value as? CaffeineState.Active,
-            controller.now(),
-        )
+    private fun goForeground(force: Boolean = false): Boolean {
+        val now = controller.now()
+        val active = controller.state.value as? CaffeineState.Active
+        val remaining = active?.remainingMillis(now)
+        val deadline = active?.deadlineElapsed
+        if (deadline != shownDeadline) {
+            countdownEndsAt = remaining?.let { System.currentTimeMillis() + it }
+        }
+        val minutes = remaining?.let { ceil(it / 60_000.0).toInt() }
+        if (!force && inForeground && hasShownDeadline && deadline == shownDeadline && minutes == shownMinutes) {
+            return true
+        }
+        val notification = CaffeineNotifications.build(this, active, now, countdownEndsAt)
         return try {
             if (Sdk.isAtLeast34()) {
                 // MANIFEST means "the types declared in the manifest" (specialUse).
@@ -260,6 +288,10 @@ class CaffeineService : Service() {
             } else {
                 startForeground(CaffeineNotifications.ID, notification)
             }
+            inForeground = true
+            hasShownDeadline = true
+            shownDeadline = deadline
+            shownMinutes = minutes
             true
         } catch (e: IllegalStateException) {
             // ForegroundServiceStartNotAllowedException (12+), MissingForegroundServiceTypeException
